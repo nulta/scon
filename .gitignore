@@ -1,0 +1,7 @@
+
+# ASP.NET Core
+bin/
+obj/
+
+# Secrets
+.env
