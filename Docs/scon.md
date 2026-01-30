@@ -29,7 +29,7 @@
 - `SCON_AUTHORIZED_ROLE_ID`
 
 엔드포인트:
-- POST `/login` : Discord의 로그인 요청 페이지로 리다이렉트.
+- GET `/login` : Discord의 로그인 요청 페이지로 리다이렉트.
 - POST `/logout` : 로그아웃.
 - `/oauth` : OAuth에 전달할 리다이렉트 URI.
 
@@ -38,6 +38,7 @@
 필요한 스코프는 `identify`와 `guilds.members.read`이다.
 
 Discord OAuth로의 인증이 완료되었다면, 아래 체크를 수행한다.
+이 과정에서 Discord API로의 추가적인 API 호출이 필요할 수 있다.
 
 - 해당 디스코드 계정은 `SCON_AUTHORIZED_GUILD_ID` 길드에 가입해 있어야 한다.
 - 해당 디스코드 계정은 위 길드에서 `SCON_AUTHORIZED_ROLE_ID` 역할을 가지고 있어야 한다.
@@ -65,6 +66,7 @@ Discord OAuth로의 인증이 완료되었다면, 아래 체크를 수행한다.
 - 해당 커맨드는 스스로 종료되지 않고, 콘솔 내용을 계속 출력한다.
 - 해당 커맨드의 출력 형식은 서버 로그를 `tail -F`하는 것과 유사하다.
 - 로그 로테이션이나 연결 끊김 대응 같은 처리는, 해당 커맨드가 처리해 준다고 가정한다.
+- stderr으로 출력되는 내용은, 만약 있다면, stdout처럼 병합해서 처리한다.
 
 주의사항은 다음과 같다.
 - 해당 커맨드는 Scon 시작 시점에 하나만 실행하고 single source of truth로 삼아야 한다.
@@ -111,3 +113,7 @@ Discord OAuth로의 인증이 완료되었다면, 아래 체크를 수행한다.
 
 환경 변수로 주어진 명령에, 실행할 커맨드를 **Base64 인코딩해서** 제공하면 게임 서버로 커맨드가 전달된다.
 예를 들어, `$SCON_SEND_CMD SGVsbG8gd29ybGQKSGVsbG8gd29ybGQK` 과 같은 형식으로 실행하면 된다.
+
+## 기타 사항
+본 프로젝트는 .NET의 Native AOT를 사용하는 것을 선호한다.
+그러나, 기술적인 문제로 그렇게 하는 것이 불가능하다면, 최후의 수단으로 Native AOT 지원을 제거하는 것도 가능하다.
