@@ -1,11 +1,55 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>Scon</title>
+
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        main {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        h1 {
+            font-size: 4rem;
+            margin: 0;
+            line-height: 110%;
+        }
+
+        p {
+            font-size: 1rem;
+            opacity: 0.4;
+            margin-top: 0;
+            margin-bottom: 2rem;
+        }
+
+        button {
+            padding: 0.75rem 2rem;
+            font-size: 1rem;
+            cursor: pointer;
+
+            background-color: #0fc;
+            border: none;
+            border-radius: 6px;
+            color: #111;
+
+            &:hover {
+                background-color: #8fc;
+            }
+        }
+    </style>
 </head>
 <body>
-    <h1>Scon</h1>
+    <main>
+        <h1>Scon</h1>
+        <p>Remote Server Console</p>
+
+        <button onclick="window.location='/console'">로그인</button>
+    </main>
 </body>
 </html>
