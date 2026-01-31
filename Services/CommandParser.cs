@@ -34,7 +34,7 @@ public static class CommandParser
         {
             case "say":
                 args = args.Cut(200);
-                return $"scon_say \"{username}\" \"{args}\"";
+                return $"scon_say \"{username}\" \"{args.ToBase64()}\"";
 
             case "status":
                 return $"scon_status \"{username}\"";
@@ -44,7 +44,7 @@ public static class CommandParser
                 var kickUser = kickParts[0].Cut(32);
                 var kickReason = kickParts.GetOr(1, "Kicked by admin").Cut(64);
 
-                return $"scon_kick \"{username}\" \"{kickUser}\" \"{kickReason}\"";
+                return $"scon_kick \"{username}\" \"{kickUser.ToBase64()}\" \"{kickReason.ToBase64()}\"";
 
             case "banid":
                 var banParts = args.Split(' ', 3);
@@ -52,7 +52,7 @@ public static class CommandParser
                 var banTime = banParts.GetOr(1, "0").Cut(16);
                 var banReason = banParts.GetOr(2, "No reason given").Cut(64);
 
-                return $"scon_banid \"{username}\" \"{banId}\" \"{banTime}\" \"{banReason}\"";
+                return $"scon_banid \"{username}\" \"{banId}\" \"{banTime}\" \"{banReason.ToBase64()}\"";
             
             case "bancheck":
                 var checkId = args.Split(' ', 2)[0].Cut(32);
