@@ -47,11 +47,16 @@ public static class CommandParser
                 return $"scon_kick \"{username}\" \"{kickUser}\" \"{kickReason}\"";
 
             case "banid":
-                var banParts = args.Split(' ', 2);
+                var banParts = args.Split(' ', 3);
                 var banId = banParts[0].Cut(32);
-                var banReason = banParts.GetOr(1, "Banned by admin").Cut(64);
+                var banTime = banParts.GetOr(1, "0").Cut(16);
+                var banReason = banParts.GetOr(2, "No reason given").Cut(64);
 
-                return $"scon_banid \"{username}\" \"{banId}\" \"{banReason}\"";
+                return $"scon_banid \"{username}\" \"{banId}\" \"{banTime}\" \"{banReason}\"";
+            
+            case "bancheck":
+                var checkId = args.Split(' ', 2)[0].Cut(32);
+                return $"scon_bancheck \"{username}\" \"{checkId}\"";
         }
 
         return null;

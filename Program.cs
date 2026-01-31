@@ -3,6 +3,9 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Options;
 using Scon;
 using Scon.Models;
 
@@ -29,6 +32,13 @@ builder.Services.Configure<SconOptions>(options =>
 builder.Services.AddSingleton<ConsoleService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ConsoleService>());
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
@@ -44,12 +54,15 @@ builder.Services.AddAuthentication(options =>
 {
     options.LoginPath = "/login";
     options.LogoutPath = "/logout";
+    options.ExpireTimeSpan = TimeSpan.FromHours(6);
+    options.AccessDeniedPath = "/unauthorized";
 })
 .AddDiscord(options =>
 {
     options.ClientId = sconOptions.DiscordClientId;
     options.ClientSecret = sconOptions.DiscordClientSecret;
     options.SaveTokens = true;
+    options.AccessDeniedPath = "/unauthorized";
 
     options.Scope.Add("guilds.members.read"); // Required to check roles in a specific guild
 
@@ -77,23 +90,29 @@ builder.Services.AddAuthentication(options =>
             return;
         }
 
-        if (context.Identity?.Name is null)
+        if (context.Identity?.Name.IsEmpty() != false)
         {
-            context.Fail("No identity found.");
+            context.Fail("User identity is missing.");
             return;
         }
 
         // Sanitized Username
-        var username = member.Nickname ?? context.Identity.Name;
+        var username = member.Nickname ?? context.Identity.Name!;
         var sanitized = username.ConsoleSafe().Cut(24).OrDefault("Unknown");
 
         context.Identity.AddClaim(new("SconUser", sanitized));
     };
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("Auth", policy => policy
+        .RequireAuthenticatedUser()
+        .RequireClaim("SconUser")
+    );
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -30,7 +30,7 @@
             overflow-y: auto;
             padding: 10px;
             white-space: pre-wrap;
-            background: #000;
+            background: #111;
             border-top: 1px solid #444;
             border-bottom: 1px solid #444;
         }
@@ -54,17 +54,35 @@
         button {
             padding: 8px 16px;
             cursor: pointer;
+            background-color: #444;
+            border: 1px solid #666;
+            color: #eee;
+            border-radius: 4px;
         }
 
         .log-line {
             margin: 2px 0;
+            white-space: pre-wrap;
+        }
+
+        .logo {
+            font-weight: bold;
+            color: var(--theme-color);
+        }
+
+        .span-box > span:not(:first-child) {
+            margin-inline: 0.25rem;
         }
     </style>
 </head>
 
 <body>
     <header>
-        <span>Scon</span>
+        <div class="span-box">
+            <span class="logo">Scon</span>
+            <span id="username">...</span>
+            <span id="current-utc">UTC 00:00:00</span>
+        </div>
         <div>
             <a href="/logout" style="color: #ff4a4a; margin-left: 10px;">Logout</a>
         </div>
@@ -73,9 +91,31 @@
     <div id="console"></div>
 
     <form id="controls">
-        <input type="text" id="cmdInput" placeholder="Enter command..." autocomplete="off">
+        <input type="text" id="cmdInput" placeholder="help" autocomplete="off">
         <button type="submit">Send</button>
     </form>
+
+    <script>
+        const utcSpan = document.querySelector('#current-utc');
+        const usernameSpan = document.querySelector('#username');
+
+        function updateTime() {
+            const now = new Date();
+            const utcString = now.toISOString().substr(11, 8);
+            utcSpan.textContent = 'UTC ' + utcString;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        fetch('/api/whoami')
+            .then(res => res.json())
+            .then(data => {
+                usernameSpan.textContent = data.nick || "";
+            })
+            .catch(err => {
+                console.error('Failed to fetch user info:', err);
+            });
+    </script>
 
     <script>
         const consoleDiv = document.getElementById('console');
@@ -110,6 +150,15 @@
 
         function addError(text) {
             addLog(text, '#ff4a4a');
+        }
+
+        function handleHelp() {
+            addInfo("help - 명령어 목록:");
+            addInfo("  status           플레이어 목록을 표시합니다.");
+            addInfo("  say [내용]       전체 채팅을 보냅니다.");
+            addInfo("  kick [대상] {사유}    사용자를 킥합니다.");
+            addInfo("  banid [고유번호] {기간} {사유}     해당 고유번호를 밴 처리합니다.");
+            addInfo("  bancheck [고유번호]     해당 고유번호의 밴 여부를 확인합니다.");
         }
 
         evtSource.onmessage = (event) => {

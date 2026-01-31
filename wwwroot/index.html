@@ -19,6 +19,7 @@
             font-size: 4rem;
             margin: 0;
             line-height: 110%;
+            color: var(--theme-color);
         }
 
         p {
@@ -33,14 +34,20 @@
             font-size: 1rem;
             cursor: pointer;
 
-            background-color: #0fc;
+            background-color: #eee;
             border: none;
             border-radius: 6px;
             color: #111;
+            transition: background-color 0.1s;
 
             &:hover {
-                background-color: #8fc;
+                background-color: #ddd;
             }
+        }
+
+        #unauthorized {
+            margin-top: 2rem;
+            color: #ff4a4a88;
         }
     </style>
 </head>
@@ -50,6 +57,16 @@
         <p>Remote Server Console</p>
 
         <button onclick="window.location='/console'">로그인</button>
+
+        <div id="unauthorized" style="display: none">
+        </div>
     </main>
+
+    <script>
+        if (window.location.pathname.includes('/unauthorized')) {
+            document.getElementById('unauthorized').style.display = '';
+            document.getElementById('unauthorized').textContent = '접근이 거부되었습니다.';
+        }
+    </script>
 </body>
 </html>

@@ -20,12 +20,14 @@ public class ConsoleService : BackgroundService
     {
         _options = options.Value;
         _logger = logger;
-        _logChannel = Channel.CreateBounded<string>(new BoundedChannelOptions(1000)
+        _logChannel = Channel.CreateBounded<string>(new BoundedChannelOptions(200)
         {
-            FullMode = BoundedChannelFullMode.DropOldest
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleWriter = true,
+            Capacity = 200
         });
 
-        _history = new Queue<string>(HistoryLimit);
+        _history = new();
     }
 
     public ChannelReader<string> Logs => _logChannel.Reader;
@@ -61,7 +63,10 @@ public class ConsoleService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in console tail process. Restarting in 5s...");
-                try { await Task.Delay(5000, stoppingToken); } catch { }
+            }
+
+            if (!stoppingToken.IsCancellationRequested) {
+                try { await Task.Delay(5000, stoppingToken); } catch (OperationCanceledException) { }
             }
         }
     }
@@ -71,11 +76,9 @@ public class ConsoleService : BackgroundService
         var startInfo = new ProcessStartInfo
         {
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
         };
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -93,7 +96,6 @@ public class ConsoleService : BackgroundService
         using var process = new Process { StartInfo = startInfo };
 
         process.OutputDataReceived += (s, e) => Broadcast(e.Data);
-        process.ErrorDataReceived += (s, e) => Broadcast(e.Data);
 
         if (!process.Start())
         {
@@ -102,7 +104,6 @@ public class ConsoleService : BackgroundService
         }
 
         process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
 
         await process.WaitForExitAsync(stoppingToken);
     }

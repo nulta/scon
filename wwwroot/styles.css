@@ -22,3 +22,7 @@ body {
     color: #eee;
     font-family: 'IbmPlexSans', sans-serif;
 }
+
+:root {
+    --theme-color: #ffc954;
+}

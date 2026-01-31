@@ -23,12 +23,12 @@ public static class Routes
         // /logout
         app.MapGet("/logout", async (HttpContext ctx) =>
         {
-            await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            await ctx.SignOutAsync();
             return Results.Redirect("/");
         });
 
         // /api/console (SSE)
-        app.MapGet("/api/console", [Authorize] async (HttpContext ctx, ConsoleService consoleService, CancellationToken ct) =>
+        app.MapGet("/api/console", [Authorize("Auth")] async (HttpContext ctx, ConsoleService consoleService, CancellationToken ct) =>
         {
             ctx.Response.Headers.Append("Content-Type", "text/event-stream");
             ctx.Response.Headers.Append("Cache-Control", "no-cache");
@@ -54,9 +54,9 @@ public static class Routes
         });
 
         // /api/command
-        app.MapPost("/api/command", [Authorize] async (HttpContext ctx, [FromBody] CommandRequest req, ConsoleService consoleService) =>
+        app.MapPost("/api/command", [Authorize("Auth")] async (HttpContext ctx, [FromBody] CommandRequest req, ConsoleService consoleService) =>
         {
-            var user = ctx.User.FindFirst("SconUser")?.Value ?? "Unknown";
+            var user = ctx.User.FindFirst("SconUser")!.Value;
             var (success, b64, error) = CommandParser.Process(req.Command, user);
 
             if (!success) return Results.BadRequest(new ApiError(error));
@@ -66,30 +66,49 @@ public static class Routes
         });
 
         // /api/whoami
-        app.MapGet("/api/whoami", [Authorize] (HttpContext ctx) =>
+        app.MapGet("/api/whoami", [Authorize("Auth")] (HttpContext ctx) =>
         {
-            var user = ctx.User.FindFirst("SconUser")?.Value ?? "Unknown";
+            var user = ctx.User.FindFirst("SconUser")!.Value;
             return Results.Ok(new ApiWhoAmi(user));
         });
 
         // /console: redirect to login or serve static page
-        app.MapGet("/console", (HttpContext ctx) =>
+        app.MapGet("/console.html", (HttpContext ctx) => Results.NotFound());
+        app.MapGet("/console", [Authorize("Auth")] (HttpContext ctx) =>
         {
-            if (!ctx.User.Identity?.IsAuthenticated ?? true)
-            {
-                return Results.Redirect("/login");
-            }
-
             var consoleFilePath = Path.Combine(app.Environment.WebRootPath ?? "", "console.html");
             return Results.File(consoleFilePath, "text/html");
         });
 
-        // / : redirect to console or serve index page
-        app.MapGet("/", (HttpContext ctx) =>
+        // /
+        app.MapGet("/", async (HttpContext ctx) =>
         {
-            if (ctx.User.Identity?.IsAuthenticated ?? false)
+            var isAuthenticated = ctx.User.Identity?.IsAuthenticated == true;
+            var hasClaim = ctx.User.Claims.Any(v => v.Type == "SconUser");
+
+            if (hasClaim)
             {
                 return Results.Redirect("/console");
+            }
+
+            if (isAuthenticated && !hasClaim) {
+                // Authenticated, but missing SconUser claim
+                await ctx.SignOutAsync();
+            }
+
+            var indexFilePath = Path.Combine(app.Environment.WebRootPath ?? "", "index.html");
+            return Results.File(indexFilePath, "text/html");
+        });
+
+        // /unauthorized
+        app.MapGet("/unauthorized", async (HttpContext ctx) =>
+        {
+            var isAuthenticated = ctx.User.Identity?.IsAuthenticated == true;
+            var hasClaim = ctx.User.Claims.Any(v => v.Type == "SconUser");
+
+            if (isAuthenticated && !hasClaim) {
+                // Authenticated, but missing SconUser claim
+                await ctx.SignOutAsync();
             }
 
             var indexFilePath = Path.Combine(app.Environment.WebRootPath ?? "", "index.html");
