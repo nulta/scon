@@ -91,7 +91,7 @@
     <div id="console"></div>
 
     <form id="controls">
-        <input type="text" id="cmdInput" placeholder="help" autocomplete="off">
+        <input type="text" id="cmdInput" placeholder="help" autocomplete="off" value="status">
         <button type="submit">Send</button>
     </form>
 
@@ -145,7 +145,7 @@
         }
 
         function addInfo(text) {
-            addLog(text, '#4aff4a');
+            addLog(text, '#ffc954');
         }
 
         function addError(text) {
@@ -154,11 +154,11 @@
 
         function handleHelp() {
             addInfo("help - 명령어 목록:");
-            addInfo("  status           플레이어 목록을 표시합니다.");
-            addInfo("  say [내용]       전체 채팅을 보냅니다.");
-            addInfo("  kick [대상] {사유}    사용자를 킥합니다.");
-            addInfo("  banid [고유번호] {기간} {사유}     해당 고유번호를 밴 처리합니다.");
-            addInfo("  bancheck [고유번호]     해당 고유번호의 밴 여부를 확인합니다.");
+            addInfo("  status                           플레이어 목록을 표시합니다.");
+            addInfo("  say [내용]                       전체 채팅을 보냅니다.");
+            addInfo("  kick [대상] {사유}               사용자를 킥합니다.");
+            addInfo("  banid [고유번호] {기간} {사유}   해당 고유번호를 밴 처리합니다.");
+            addInfo("  bancheck [고유번호]              해당 고유번호의 밴 여부를 확인합니다.");
         }
 
         evtSource.onmessage = (event) => {
@@ -176,6 +176,11 @@
             if (!val) return;
 
             input.value = '';
+
+            if (val.toLowerCase() === 'help') {
+                handleHelp();
+                return;
+            }
 
             try {
                 addInfo("> " + val);

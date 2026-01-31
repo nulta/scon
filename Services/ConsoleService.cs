@@ -14,17 +14,17 @@ public class ConsoleService : BackgroundService
     private readonly Channel<string> _logChannel;
     private readonly Queue<string> _history;
     private readonly Lock _lock = new();
-    private const int HistoryLimit = 200;
+    private const int HistoryLimit = 1000;
 
     public ConsoleService(IOptions<SconOptions> options, ILogger<ConsoleService> logger)
     {
         _options = options.Value;
         _logger = logger;
-        _logChannel = Channel.CreateBounded<string>(new BoundedChannelOptions(200)
+        _logChannel = Channel.CreateBounded<string>(new BoundedChannelOptions(HistoryLimit)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleWriter = true,
-            Capacity = 200
+            Capacity = HistoryLimit
         });
 
         _history = new();
