@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Scon.Models;
 using Scon.Services;
@@ -9,6 +9,8 @@ namespace Scon;
 
 public static class Routes
 {
+    private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
+
     public static void MapRoutes(this WebApplication app)
     {
         // /api/health
@@ -20,8 +22,8 @@ public static class Routes
             authenticationSchemes: ["Discord"]
         ));
 
-        // /logout
-        app.MapGet("/logout", async (HttpContext ctx) =>
+        // /logout (POST per spec, so a third-party page can't log users out with a simple link/img)
+        app.MapPost("/logout", async (HttpContext ctx) =>
         {
             await ctx.SignOutAsync();
             return Results.Redirect("/");
@@ -30,23 +32,52 @@ public static class Routes
         // /api/console (SSE)
         app.MapGet("/api/console", [Authorize("Auth")] async (HttpContext ctx, ConsoleService consoleService, CancellationToken ct) =>
         {
-            ctx.Response.Headers.Append("Content-Type", "text/event-stream");
-            ctx.Response.Headers.Append("Cache-Control", "no-cache");
-            ctx.Response.Headers.Append("Connection", "keep-alive");
+            ctx.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+            ctx.Response.ContentType = "text/event-stream";
+            ctx.Response.Headers.CacheControl = "no-cache";
+            ctx.Response.Headers["X-Accel-Buffering"] = "no"; // stop nginx from buffering the stream
 
-            // Send history
-            var history = consoleService.GetHistory();
-            foreach (var line in history)
-            {
-                await ctx.Response.WriteAsync($"data: {line}\n\n", ct);
-            }
+            // On reconnect the browser sends the last id it received; only send what it missed.
+            _ = long.TryParse(ctx.Request.Headers["Last-Event-ID"].ToString(), out var lastEventId);
 
-            // Stream new logs
+            var (history, subscription) = consoleService.Subscribe(lastEventId);
+            using var _sub = subscription;
+
             try
             {
-                await foreach (var line in consoleService.Logs.ReadAllAsync(ct))
+                await ctx.Response.WriteAsync("retry: 3000\n\n", ct);
+                foreach (var line in history)
                 {
-                    await ctx.Response.WriteAsync($"data: {line}\n\n", ct);
+                    await WriteEventAsync(ctx.Response, line, ct);
+                }
+                await ctx.Response.Body.FlushAsync(ct);
+
+                var reader = subscription.Reader;
+                while (!ct.IsCancellationRequested)
+                {
+                    bool hasData;
+                    using (var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                    {
+                        heartbeat.CancelAfter(SseHeartbeatInterval);
+                        try
+                        {
+                            hasData = await reader.WaitToReadAsync(heartbeat.Token);
+                        }
+                        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                        {
+                            // Idle: send an SSE comment so proxies don't close the connection.
+                            await ctx.Response.WriteAsync(": ping\n\n", ct);
+                            await ctx.Response.Body.FlushAsync(ct);
+                            continue;
+                        }
+                    }
+
+                    if (!hasData) break;
+
+                    while (reader.TryRead(out var line))
+                    {
+                        await WriteEventAsync(ctx.Response, line, ct);
+                    }
                     await ctx.Response.Body.FlushAsync(ct);
                 }
             }
@@ -61,7 +92,13 @@ public static class Routes
 
             if (!success) return Results.BadRequest(new ApiError(error));
 
-            consoleService.SendCommand(b64);
+            var sent = await consoleService.SendCommandAsync(b64, ctx.RequestAborted);
+            if (!sent)
+            {
+                return Results.Json(new ApiError("Failed to deliver the command to the server"),
+                    AppJsonContext.Default.ApiError, statusCode: StatusCodes.Status502BadGateway);
+            }
+
             return Results.Ok();
         });
 
@@ -83,39 +120,48 @@ public static class Routes
         // /
         app.MapGet("/", async (HttpContext ctx) =>
         {
-            var isAuthenticated = ctx.User.Identity?.IsAuthenticated == true;
-            var hasClaim = ctx.User.Claims.Any(v => v.Type == "SconUser");
-
-            if (hasClaim)
+            if (HasSconClaim(ctx))
             {
                 return Results.Redirect("/console");
             }
 
-            if (isAuthenticated && !hasClaim) {
-                // Authenticated, but missing SconUser claim
-                await ctx.SignOutAsync();
-            }
-
-            var indexFilePath = Path.Combine(app.Environment.WebRootPath ?? "", "index.html");
-            return Results.File(indexFilePath, "text/html");
+            await SignOutIfIncompleteAsync(ctx);
+            return IndexPage(app);
         });
 
         // /unauthorized
         app.MapGet("/unauthorized", async (HttpContext ctx) =>
         {
-            var isAuthenticated = ctx.User.Identity?.IsAuthenticated == true;
-            var hasClaim = ctx.User.Claims.Any(v => v.Type == "SconUser");
-
-            if (isAuthenticated && !hasClaim) {
-                // Authenticated, but missing SconUser claim
-                await ctx.SignOutAsync();
-            }
-
-            var indexFilePath = Path.Combine(app.Environment.WebRootPath ?? "", "index.html");
-            return Results.File(indexFilePath, "text/html");
+            await SignOutIfIncompleteAsync(ctx);
+            return IndexPage(app);
         });
 
         app.UseStaticFiles();
         app.MapFallbackToFile("index.html");
+    }
+
+    private static async Task WriteEventAsync(HttpResponse response, ConsoleLine line, CancellationToken ct)
+    {
+        // A line can't contain \n (it was read line by line), but strip \r just in case:
+        // a bare CR would also terminate the SSE field.
+        var text = line.Text.Replace("\r", "");
+        await response.WriteAsync($"id: {line.Id}\ndata: {text}\n\n", ct);
+    }
+
+    private static bool HasSconClaim(HttpContext ctx) => ctx.User.HasClaim(c => c.Type == "SconUser");
+
+    /// <summary>Authenticated, but missing the SconUser claim: clear the broken session.</summary>
+    private static async Task SignOutIfIncompleteAsync(HttpContext ctx)
+    {
+        if (ctx.User.Identity?.IsAuthenticated == true && !HasSconClaim(ctx))
+        {
+            await ctx.SignOutAsync();
+        }
+    }
+
+    private static IResult IndexPage(WebApplication app)
+    {
+        var indexFilePath = Path.Combine(app.Environment.WebRootPath ?? "", "index.html");
+        return Results.File(indexFilePath, "text/html");
     }
 }

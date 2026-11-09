@@ -70,6 +70,16 @@
             color: var(--theme-color);
         }
 
+        .link-button {
+            background: none;
+            border: none;
+            padding: 0;
+            margin-left: 10px;
+            color: #ff4a4a;
+            text-decoration: underline;
+            font: inherit;
+        }
+
         .span-box > span:not(:first-child) {
             margin-inline: 0.25rem;
         }
@@ -84,7 +94,9 @@
             <span id="current-utc">UTC 00:00:00</span>
         </div>
         <div>
-            <a href="/logout" style="color: #ff4a4a; margin-left: 10px;">Logout</a>
+            <form method="post" action="/logout" style="display: inline">
+                <button type="submit" class="link-button">Logout</button>
+            </form>
         </div>
     </header>
 
@@ -107,8 +119,16 @@
         setInterval(updateTime, 1000);
         updateTime();
 
+        // Session expired (60 min) or revoked: go back to the login page.
+        function redirectToLogin() {
+            window.location.href = '/';
+        }
+
         fetch('/api/whoami')
-            .then(res => res.json())
+            .then(res => {
+                if (res.status === 401 || res.status === 403) redirectToLogin();
+                return res.json();
+            })
             .then(data => {
                 usernameSpan.textContent = data.nick || "";
             })
@@ -161,13 +181,29 @@
             addInfo("  bancheck [고유번호]              해당 고유번호의 밴 여부를 확인합니다.");
         }
 
+        // The browser resends the last event id on reconnect, so the server only sends missed lines.
+        // If ids go backwards, the server was restarted and is resending its history from scratch.
+        let lastEventId = 0;
         evtSource.onmessage = (event) => {
+            const id = Number(event.lastEventId) || 0;
+            if (id && id <= lastEventId) {
+                consoleDiv.replaceChildren();
+            }
+            lastEventId = id || lastEventId;
             addLog(event.data);
         };
 
-        evtSource.onerror = (err) => {
-            // If auth fails (401), EventSource usually just errors out.
-            // We can check evtSource.readyState
+        evtSource.onerror = async () => {
+            // EventSource retries on its own for network errors, but a 401/403 closes it for good.
+            if (evtSource.readyState !== EventSource.CLOSED) return;
+            try {
+                const res = await fetch('/api/whoami');
+                if (res.status === 401 || res.status === 403) {
+                    redirectToLogin();
+                    return;
+                }
+            } catch { }
+            addError("콘솔 연결이 끊어졌습니다. 페이지를 새로고침하세요.");
         };
 
         form.onsubmit = async (e) => {
@@ -191,12 +227,19 @@
                     body: JSON.stringify({ command: val })
                 });
 
+                if (res.status === 401 || res.status === 403) {
+                    addError("세션이 만료되었습니다. 다시 로그인하세요.");
+                    setTimeout(redirectToLogin, 1500);
+                    return;
+                }
+
                 if (!res.ok) {
                     const data = await res.json().catch(() => ({}));
                     addError("Error: " + (data.message || res.statusText));
                 }
             } catch (ex) {
                 console.error(ex);
+                addError("Error: 서버에 연결할 수 없습니다.");
             }
         };
     </script>
