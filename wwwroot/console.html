@@ -91,7 +91,7 @@
         <div class="span-box">
             <span class="logo">Scon</span>
             <span id="username">...</span>
-            <span id="current-utc">UTC 00:00:00</span>
+            <span id="current-utc">KST 00:00:00</span>
         </div>
         <div>
             <form method="post" action="/logout" style="display: inline">
@@ -111,10 +111,14 @@
         const utcSpan = document.querySelector('#current-utc');
         const usernameSpan = document.querySelector('#username');
 
+        const kstFormat = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Asia/Seoul',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hourCycle: 'h23',
+        });
+
         function updateTime() {
-            const now = new Date();
-            const utcString = now.toISOString().substr(11, 8);
-            utcSpan.textContent = 'UTC ' + utcString;
+            utcSpan.textContent = 'KST ' + kstFormat.format(new Date());
         }
         setInterval(updateTime, 1000);
         updateTime();
