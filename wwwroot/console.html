@@ -79,8 +79,10 @@
             vertical-align: middle;
         }
 
-        #users li.me {
-            color: var(--theme-color);
+        #users-updated {
+            margin-top: 10px;
+            font-size: 0.75rem;
+            color: #777;
         }
 
         @media (max-width: 640px) {
@@ -155,8 +157,9 @@
     <div id="main">
         <div id="console"></div>
         <aside id="users">
-            <h2>접속 중 (<span id="users-count">0</span>)</h2>
+            <h2>플레이어 (<span id="users-count">0</span>)</h2>
             <ul id="users-list"></ul>
+            <div id="users-updated">정보 없음</div>
         </aside>
     </div>
 
@@ -186,17 +189,13 @@
             window.location.href = '/';
         }
 
-        let myNick = null;
-
         fetch('/api/whoami')
             .then(res => {
                 if (res.status === 401 || res.status === 403) redirectToLogin();
                 return res.json();
             })
             .then(data => {
-                myNick = data.nick || null;
                 usernameSpan.textContent = data.nick || "";
-                renderUsers(lastUsers);
             })
             .catch(err => {
                 console.error('Failed to fetch user info:', err);
@@ -259,25 +258,26 @@
             addLog(event.data);
         };
 
-        let lastUsers = [];
-        function renderUsers(users) {
-            lastUsers = users;
+        // Player list reported by the game server ([SCON_PLAYERS] lines in the log)
+        function renderPlayers({ players, updatedAt }) {
             const list = document.getElementById('users-list');
-            document.getElementById('users-count').textContent = users.length;
-            list.replaceChildren(...users.map(name => {
+            document.getElementById('users-count').textContent = updatedAt ? players.length : '?';
+            list.replaceChildren(...players.map(p => {
                 const li = document.createElement('li');
-                li.textContent = name;
-                li.title = name;
-                if (name === myNick) li.className = 'me';
+                li.textContent = p.name;
+                li.title = p.steamid ? `${p.name}\n${p.steamid}` : p.name;
                 return li;
             }));
+            document.getElementById('users-updated').textContent = updatedAt
+                ? '갱신 ' + kstFormat.format(new Date(updatedAt))
+                : '정보 없음';
         }
 
-        evtSource.addEventListener('users', (event) => {
+        evtSource.addEventListener('players', (event) => {
             try {
-                renderUsers(JSON.parse(event.data));
+                renderPlayers(JSON.parse(event.data));
             } catch (ex) {
-                console.error('Bad users event:', ex);
+                console.error('Bad players event:', ex);
             }
         });
 

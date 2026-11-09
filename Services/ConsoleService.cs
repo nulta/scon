@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Options;
 using Scon.Models;
@@ -14,13 +16,21 @@ namespace Scon.Services;
 /// </summary>
 public readonly record struct ConsoleLine(long Id, string Text);
 
-/// <summary>Something pushed to a console subscriber: a new line or an updated online-user list.</summary>
+/// <summary>Something pushed to a console subscriber: a new line or an updated player list.</summary>
 public abstract record ConsoleEvent;
 public sealed record ConsoleLineEvent(ConsoleLine Line) : ConsoleEvent;
-public sealed record OnlineUsersEvent(string[] Users) : ConsoleEvent;
+public sealed record PlayersEvent(PlayersSnapshot Snapshot) : ConsoleEvent;
 
-public class ConsoleService : BackgroundService
+public partial class ConsoleService : BackgroundService
 {
+    /// <summary>
+    /// Marker the game server writes into the console/log to report its player list:
+    /// <c>[SCON_PLAYERS] base64(json [{"name":..., "steamid":...}, ...])</c>.
+    /// Anything may precede it on the line (e.g. a ULX timestamp).
+    /// </summary>
+    public const string PlayersMarker = "[SCON_PLAYERS]";
+    private const int MaxPlayers = 256;
+
     private const int HistoryLimit = 1000;
     private const int SubscriberBufferLimit = 1000;
     private static readonly TimeSpan SendCommandTimeout = TimeSpan.FromSeconds(10);
@@ -29,14 +39,17 @@ public class ConsoleService : BackgroundService
     private readonly SconOptions _options;
     private readonly ILogger<ConsoleService> _logger;
 
-    // Guards _history, _nextId, _subscribers and _online so that taking a history snapshot
+    // Guards _history, _nextId, _subscribers and _players so that taking a history snapshot
     // and subscribing to new lines happen atomically (no lost or duplicated lines).
     // Every write to a subscriber channel happens under this lock, so each channel has a single writer at a time.
     private readonly Lock _lock = new();
     private readonly Queue<ConsoleLine> _history = new();
     private readonly HashSet<Channel<ConsoleEvent>> _subscribers = [];
-    private readonly Dictionary<string, int> _online = []; // username -> open connections (tabs)
+    private PlayersSnapshot _players = new([], null); // UpdatedAt == null: no report received yet
     private long _nextId = 1;
+
+    [GeneratedRegex(@"\[SCON_PLAYERS\]\s*([A-Za-z0-9+/=]+)")]
+    private static partial Regex PlayersLineRegex();
 
     public ConsoleService(IOptions<SconOptions> options, ILogger<ConsoleService> logger)
     {
@@ -49,9 +62,9 @@ public class ConsoleService : BackgroundService
     /// Returns the buffered history (lines with id greater than <paramref name="afterId"/>)
     /// and a subscription that receives every line broadcast afterwards.
     /// Each subscriber gets its own channel, so every connected client sees every line.
-    /// If <paramref name="username"/> is given, the user is counted as online until the subscription is disposed.
+    /// The current player list is delivered to the new subscriber right away.
     /// </summary>
-    public (ConsoleLine[] History, ConsoleSubscription Subscription) Subscribe(long afterId = 0, string? username = null)
+    public (ConsoleLine[] History, ConsoleSubscription Subscription) Subscribe(long afterId = 0)
     {
         var channel = Channel.CreateBounded<ConsoleEvent>(new BoundedChannelOptions(SubscriberBufferLimit)
         {
@@ -68,52 +81,53 @@ public class ConsoleService : BackgroundService
 
             var history = _history.Where(l => l.Id > afterId).ToArray();
             _subscribers.Add(channel);
+            channel.Writer.TryWrite(new PlayersEvent(_players));
 
-            if (username is not null)
-            {
-                _online[username] = _online.GetValueOrDefault(username) + 1;
-                BroadcastOnlineUsersLocked(); // also delivers the current list to the new subscriber
-            }
-            else
-            {
-                channel.Writer.TryWrite(new OnlineUsersEvent(GetOnlineUsersLocked()));
-            }
-
-            return (history, new ConsoleSubscription(this, channel, username));
+            return (history, new ConsoleSubscription(this, channel));
         }
     }
 
-    public string[] GetOnlineUsers()
+    public PlayersSnapshot GetPlayers()
     {
         lock (_lock)
         {
-            return GetOnlineUsersLocked();
+            return _players;
         }
     }
 
-    private void Unsubscribe(Channel<ConsoleEvent> channel, string? username)
+    private void Unsubscribe(Channel<ConsoleEvent> channel)
     {
         lock (_lock)
         {
-            if (_subscribers.Remove(channel) && username is not null && _online.TryGetValue(username, out var count))
-            {
-                if (count <= 1) _online.Remove(username);
-                else _online[username] = count - 1;
-
-                BroadcastOnlineUsersLocked();
-            }
+            _subscribers.Remove(channel);
         }
         channel.Writer.TryComplete();
     }
 
-    private string[] GetOnlineUsersLocked() => [.. _online.Keys.Order(StringComparer.OrdinalIgnoreCase)];
-
-    private void BroadcastOnlineUsersLocked()
+    /// <summary>
+    /// Parses a <see cref="PlayersMarker"/> line. Returns null if the line isn't a valid report.
+    /// </summary>
+    public static PlayerInfo[]? TryParsePlayersLine(string text)
     {
-        var evt = new OnlineUsersEvent(GetOnlineUsersLocked());
-        foreach (var subscriber in _subscribers)
+        if (!text.Contains(PlayersMarker, StringComparison.Ordinal)) return null;
+
+        var match = PlayersLineRegex().Match(text);
+        if (!match.Success) return null;
+
+        try
         {
-            subscriber.Writer.TryWrite(evt);
+            var json = Convert.FromBase64String(match.Groups[1].Value);
+            var players = JsonSerializer.Deserialize(json, AppJsonContext.Default.PlayerInfoArray);
+            if (players is null) return null;
+
+            return [.. players
+                .Where(p => p is not null && !p.Name.IsEmpty())
+                .Take(MaxPlayers)
+                .Select(p => new PlayerInfo(p.Name.Cut(64), (p.SteamId ?? "").Cut(32)))];
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException)
+        {
+            return null;
         }
     }
 
@@ -184,6 +198,22 @@ public class ConsoleService : BackgroundService
     private void Broadcast(string? text)
     {
         if (text.IsEmpty()) return;
+
+        // Player reports are machine-readable status lines: update the list and keep them out of the console.
+        // A malformed report falls through and is shown as a normal line, so it can be debugged.
+        if (TryParsePlayersLine(text) is { } players)
+        {
+            lock (_lock)
+            {
+                _players = new PlayersSnapshot(players, DateTimeOffset.UtcNow);
+                var playersEvent = new PlayersEvent(_players);
+                foreach (var subscriber in _subscribers)
+                {
+                    subscriber.Writer.TryWrite(playersEvent);
+                }
+            }
+            return;
+        }
 
         lock (_lock)
         {
@@ -290,17 +320,15 @@ public class ConsoleService : BackgroundService
     {
         private readonly ConsoleService _owner;
         private readonly Channel<ConsoleEvent> _channel;
-        private readonly string? _username;
 
-        internal ConsoleSubscription(ConsoleService owner, Channel<ConsoleEvent> channel, string? username)
+        internal ConsoleSubscription(ConsoleService owner, Channel<ConsoleEvent> channel)
         {
             _owner = owner;
             _channel = channel;
-            _username = username;
         }
 
         public ChannelReader<ConsoleEvent> Reader => _channel.Reader;
 
-        public void Dispose() => _owner.Unsubscribe(_channel, _username);
+        public void Dispose() => _owner.Unsubscribe(_channel);
     }
 }

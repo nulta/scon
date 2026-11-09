@@ -41,8 +41,7 @@ public static class Routes
             // On reconnect the browser sends the last id it received; only send what it missed.
             _ = long.TryParse(ctx.Request.Headers["Last-Event-ID"].ToString(), out var lastEventId);
 
-            var username = ctx.User.FindFirst("SconUser")!.Value;
-            var (history, subscription) = consoleService.Subscribe(lastEventId, username);
+            var (history, subscription) = consoleService.Subscribe(lastEventId);
             using var _sub = subscription;
 
             try
@@ -146,8 +145,8 @@ public static class Routes
     {
         ConsoleLineEvent e => WriteLineAsync(response, e.Line, ct),
         // Named event without an id, so it doesn't affect Last-Event-ID resumption.
-        OnlineUsersEvent e => response.WriteAsync(
-            $"event: users\ndata: {JsonSerializer.Serialize(e.Users, AppJsonContext.Default.StringArray)}\n\n", ct),
+        PlayersEvent e => response.WriteAsync(
+            $"event: players\ndata: {JsonSerializer.Serialize(e.Snapshot, AppJsonContext.Default.PlayersSnapshot)}\n\n", ct),
         _ => Task.CompletedTask,
     };
 

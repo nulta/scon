@@ -7,7 +7,8 @@ namespace Scon.Models;
 [JsonSerializable(typeof(ApiWhoAmi))]
 [JsonSerializable(typeof(DiscordGuildMember))]
 [JsonSerializable(typeof(CommandRequest))]
-[JsonSerializable(typeof(string[]))]
+[JsonSerializable(typeof(PlayerInfo[]))]
+[JsonSerializable(typeof(PlayersSnapshot))]
 internal partial class AppJsonContext : JsonSerializerContext
 {
 }
