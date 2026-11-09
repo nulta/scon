@@ -14,6 +14,11 @@ namespace Scon.Services;
 /// </summary>
 public readonly record struct ConsoleLine(long Id, string Text);
 
+/// <summary>Something pushed to a console subscriber: a new line or an updated online-user list.</summary>
+public abstract record ConsoleEvent;
+public sealed record ConsoleLineEvent(ConsoleLine Line) : ConsoleEvent;
+public sealed record OnlineUsersEvent(string[] Users) : ConsoleEvent;
+
 public class ConsoleService : BackgroundService
 {
     private const int HistoryLimit = 1000;
@@ -24,11 +29,13 @@ public class ConsoleService : BackgroundService
     private readonly SconOptions _options;
     private readonly ILogger<ConsoleService> _logger;
 
-    // Guards _history, _nextId and _subscribers so that taking a history snapshot
+    // Guards _history, _nextId, _subscribers and _online so that taking a history snapshot
     // and subscribing to new lines happen atomically (no lost or duplicated lines).
+    // Every write to a subscriber channel happens under this lock, so each channel has a single writer at a time.
     private readonly Lock _lock = new();
     private readonly Queue<ConsoleLine> _history = new();
-    private readonly HashSet<Channel<ConsoleLine>> _subscribers = [];
+    private readonly HashSet<Channel<ConsoleEvent>> _subscribers = [];
+    private readonly Dictionary<string, int> _online = []; // username -> open connections (tabs)
     private long _nextId = 1;
 
     public ConsoleService(IOptions<SconOptions> options, ILogger<ConsoleService> logger)
@@ -42,10 +49,11 @@ public class ConsoleService : BackgroundService
     /// Returns the buffered history (lines with id greater than <paramref name="afterId"/>)
     /// and a subscription that receives every line broadcast afterwards.
     /// Each subscriber gets its own channel, so every connected client sees every line.
+    /// If <paramref name="username"/> is given, the user is counted as online until the subscription is disposed.
     /// </summary>
-    public (ConsoleLine[] History, ConsoleSubscription Subscription) Subscribe(long afterId = 0)
+    public (ConsoleLine[] History, ConsoleSubscription Subscription) Subscribe(long afterId = 0, string? username = null)
     {
-        var channel = Channel.CreateBounded<ConsoleLine>(new BoundedChannelOptions(SubscriberBufferLimit)
+        var channel = Channel.CreateBounded<ConsoleEvent>(new BoundedChannelOptions(SubscriberBufferLimit)
         {
             // A slow client loses its oldest unread lines instead of blocking everyone else.
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -60,17 +68,53 @@ public class ConsoleService : BackgroundService
 
             var history = _history.Where(l => l.Id > afterId).ToArray();
             _subscribers.Add(channel);
-            return (history, new ConsoleSubscription(this, channel));
+
+            if (username is not null)
+            {
+                _online[username] = _online.GetValueOrDefault(username) + 1;
+                BroadcastOnlineUsersLocked(); // also delivers the current list to the new subscriber
+            }
+            else
+            {
+                channel.Writer.TryWrite(new OnlineUsersEvent(GetOnlineUsersLocked()));
+            }
+
+            return (history, new ConsoleSubscription(this, channel, username));
         }
     }
 
-    private void Unsubscribe(Channel<ConsoleLine> channel)
+    public string[] GetOnlineUsers()
     {
         lock (_lock)
         {
-            _subscribers.Remove(channel);
+            return GetOnlineUsersLocked();
+        }
+    }
+
+    private void Unsubscribe(Channel<ConsoleEvent> channel, string? username)
+    {
+        lock (_lock)
+        {
+            if (_subscribers.Remove(channel) && username is not null && _online.TryGetValue(username, out var count))
+            {
+                if (count <= 1) _online.Remove(username);
+                else _online[username] = count - 1;
+
+                BroadcastOnlineUsersLocked();
+            }
         }
         channel.Writer.TryComplete();
+    }
+
+    private string[] GetOnlineUsersLocked() => [.. _online.Keys.Order(StringComparer.OrdinalIgnoreCase)];
+
+    private void BroadcastOnlineUsersLocked()
+    {
+        var evt = new OnlineUsersEvent(GetOnlineUsersLocked());
+        foreach (var subscriber in _subscribers)
+        {
+            subscriber.Writer.TryWrite(evt);
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -148,9 +192,10 @@ public class ConsoleService : BackgroundService
             if (_history.Count >= HistoryLimit) _history.Dequeue();
             _history.Enqueue(line);
 
+            var evt = new ConsoleLineEvent(line);
             foreach (var subscriber in _subscribers)
             {
-                subscriber.Writer.TryWrite(line);
+                subscriber.Writer.TryWrite(evt);
             }
         }
     }
@@ -244,16 +289,18 @@ public class ConsoleService : BackgroundService
     public sealed class ConsoleSubscription : IDisposable
     {
         private readonly ConsoleService _owner;
-        private readonly Channel<ConsoleLine> _channel;
+        private readonly Channel<ConsoleEvent> _channel;
+        private readonly string? _username;
 
-        internal ConsoleSubscription(ConsoleService owner, Channel<ConsoleLine> channel)
+        internal ConsoleSubscription(ConsoleService owner, Channel<ConsoleEvent> channel, string? username)
         {
             _owner = owner;
             _channel = channel;
+            _username = username;
         }
 
-        public ChannelReader<ConsoleLine> Reader => _channel.Reader;
+        public ChannelReader<ConsoleEvent> Reader => _channel.Reader;
 
-        public void Dispose() => _owner.Unsubscribe(_channel);
+        public void Dispose() => _owner.Unsubscribe(_channel, _username);
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
@@ -40,7 +41,8 @@ public static class Routes
             // On reconnect the browser sends the last id it received; only send what it missed.
             _ = long.TryParse(ctx.Request.Headers["Last-Event-ID"].ToString(), out var lastEventId);
 
-            var (history, subscription) = consoleService.Subscribe(lastEventId);
+            var username = ctx.User.FindFirst("SconUser")!.Value;
+            var (history, subscription) = consoleService.Subscribe(lastEventId, username);
             using var _sub = subscription;
 
             try
@@ -48,7 +50,7 @@ public static class Routes
                 await ctx.Response.WriteAsync("retry: 3000\n\n", ct);
                 foreach (var line in history)
                 {
-                    await WriteEventAsync(ctx.Response, line, ct);
+                    await WriteLineAsync(ctx.Response, line, ct);
                 }
                 await ctx.Response.Body.FlushAsync(ct);
 
@@ -74,9 +76,9 @@ public static class Routes
 
                     if (!hasData) break;
 
-                    while (reader.TryRead(out var line))
+                    while (reader.TryRead(out var evt))
                     {
-                        await WriteEventAsync(ctx.Response, line, ct);
+                        await WriteEventAsync(ctx.Response, evt, ct);
                     }
                     await ctx.Response.Body.FlushAsync(ct);
                 }
@@ -140,7 +142,16 @@ public static class Routes
         app.MapFallbackToFile("index.html");
     }
 
-    private static async Task WriteEventAsync(HttpResponse response, ConsoleLine line, CancellationToken ct)
+    private static Task WriteEventAsync(HttpResponse response, ConsoleEvent evt, CancellationToken ct) => evt switch
+    {
+        ConsoleLineEvent e => WriteLineAsync(response, e.Line, ct),
+        // Named event without an id, so it doesn't affect Last-Event-ID resumption.
+        OnlineUsersEvent e => response.WriteAsync(
+            $"event: users\ndata: {JsonSerializer.Serialize(e.Users, AppJsonContext.Default.StringArray)}\n\n", ct),
+        _ => Task.CompletedTask,
+    };
+
+    private static async Task WriteLineAsync(HttpResponse response, ConsoleLine line, CancellationToken ct)
     {
         // A line can't contain \n (it was read line by line), but strip \r just in case:
         // a bare CR would also terminate the SSE field.

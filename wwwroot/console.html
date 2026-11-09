@@ -24,15 +24,67 @@
             align-items: center;
         }
 
+        #main {
+            flex: 1;
+            display: flex;
+            min-height: 0;
+            border-top: 1px solid #444;
+            border-bottom: 1px solid #444;
+        }
+
         #console {
             font-family: "Monoplex", monospace;
             flex: 1;
+            min-width: 0;
             overflow-y: auto;
             padding: 10px;
             white-space: pre-wrap;
             background: #111;
-            border-top: 1px solid #444;
-            border-bottom: 1px solid #444;
+        }
+
+        #users {
+            width: 180px;
+            flex-shrink: 0;
+            overflow-y: auto;
+            padding: 10px;
+            background: #1a1a1a;
+            border-left: 1px solid #444;
+        }
+
+        #users h2 {
+            margin: 0 0 8px;
+            font-size: 0.85rem;
+            font-weight: normal;
+            color: #999;
+        }
+
+        #users ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        #users li {
+            padding: 3px 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #users li::before {
+            content: "●";
+            color: #4ade80;
+            margin-right: 6px;
+            font-size: 0.7em;
+            vertical-align: middle;
+        }
+
+        #users li.me {
+            color: var(--theme-color);
+        }
+
+        @media (max-width: 640px) {
+            #users { display: none; }
         }
 
         #controls {
@@ -100,7 +152,13 @@
         </div>
     </header>
 
-    <div id="console"></div>
+    <div id="main">
+        <div id="console"></div>
+        <aside id="users">
+            <h2>접속 중 (<span id="users-count">0</span>)</h2>
+            <ul id="users-list"></ul>
+        </aside>
+    </div>
 
     <form id="controls">
         <input type="text" id="cmdInput" placeholder="help" autocomplete="off" value="status">
@@ -128,13 +186,17 @@
             window.location.href = '/';
         }
 
+        let myNick = null;
+
         fetch('/api/whoami')
             .then(res => {
                 if (res.status === 401 || res.status === 403) redirectToLogin();
                 return res.json();
             })
             .then(data => {
+                myNick = data.nick || null;
                 usernameSpan.textContent = data.nick || "";
+                renderUsers(lastUsers);
             })
             .catch(err => {
                 console.error('Failed to fetch user info:', err);
@@ -196,6 +258,28 @@
             lastEventId = id || lastEventId;
             addLog(event.data);
         };
+
+        let lastUsers = [];
+        function renderUsers(users) {
+            lastUsers = users;
+            const list = document.getElementById('users-list');
+            document.getElementById('users-count').textContent = users.length;
+            list.replaceChildren(...users.map(name => {
+                const li = document.createElement('li');
+                li.textContent = name;
+                li.title = name;
+                if (name === myNick) li.className = 'me';
+                return li;
+            }));
+        }
+
+        evtSource.addEventListener('users', (event) => {
+            try {
+                renderUsers(JSON.parse(event.data));
+            } catch (ex) {
+                console.error('Bad users event:', ex);
+            }
+        });
 
         evtSource.onerror = async () => {
             // EventSource retries on its own for network errors, but a 401/403 closes it for good.
