@@ -140,6 +140,9 @@
 
         .steamid {
             cursor: pointer;
+        }
+
+        .steamid:hover {
             text-decoration: underline dotted;
             text-underline-offset: 2px;
         }
@@ -249,9 +252,10 @@
         }
 
         // --- Plain game log lines: muted timestamps, pastel nicknames (EasyChat.PastelizeNick), clickable SteamIDs ---
-        const TS_RE = /^(\[\d{1,2}:\d{2}:\d{2}\])\s?/;
+        const TS_RE = /^(\[\d{1,2}:\d{2}:\d{2}\])/;
         const CHAT_RE = /^([^:\[<(]{1,32}): (.*)$/;
         const STEAMID_RE = /\bSTEAM_[0-5]:[01]:\d+\b/g;
+        const SPAWN_RE = /\bspawned (model|ragdoll|sent|NPC|vehicle|weapon)\b/;
 
         function appendClickable(parent, text) {
             let last = 0;
@@ -278,6 +282,7 @@
             if (ts) {
                 const span = document.createElement('span');
                 span.style.color = '#777';
+                span.style.fontStyle = 'normal';
                 span.textContent = ts[1];
                 div.append(span);
                 rest = rest.slice(ts[0].length);
@@ -293,8 +298,10 @@
                 return;
             }
 
-            // Spawn spam (props, ragdolls, vehicles, NPCs, entities) is background noise: render it in gray.
-            appendWithColor(div, rest, rest.includes(' spawned ') ? '#999' : null);
+            // Game events other than chat render in italics; spawn spam (props,
+            // ragdolls, vehicles, NPCs, entities) is background noise, so gray as well.
+            div.style.fontStyle = 'italic';
+            appendWithColor(div, rest, SPAWN_RE.test(rest) ? '#999' : null);
         }
 
         // EasyChat.PastelizeNick: hash the nick (UTF-8 bytes), use it as an HSV hue.
