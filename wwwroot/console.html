@@ -137,6 +137,16 @@
         .span-box > span:not(:first-child) {
             margin-inline: 0.25rem;
         }
+
+        .steamid {
+            cursor: pointer;
+            text-decoration: underline dotted;
+            text-underline-offset: 2px;
+        }
+
+        .steamid.copied {
+            color: var(--theme-color);
+        }
     </style>
 </head>
 
@@ -184,14 +194,21 @@
         setInterval(updateTime, 1000);
         updateTime();
 
-        // Session expired (60 min) or revoked: go back to the login page.
-        function redirectToLogin() {
+        // Session expired (6 hours) or revoked.
+        // 401: re-run the Discord login, which replaces the stale cookie and returns to the console.
+        // 403: access got revoked, so the main page is all that remains.
+        function relogin() {
+            window.location.href = '/login';
+        }
+
+        function redirectToMain() {
             window.location.href = '/';
         }
 
         fetch('/api/whoami')
             .then(res => {
-                if (res.status === 401 || res.status === 403) redirectToLogin();
+                if (res.status === 401) return relogin();
+                if (res.status === 403) return redirectToMain();
                 return res.json();
             })
             .then(data => {
@@ -211,9 +228,11 @@
         function addLog(text, color = null) {
             const div = document.createElement('div');
             div.className = 'log-line';
-            div.textContent = text;
             if (color) {
+                div.textContent = text;
                 div.style.color = color;
+            } else {
+                renderGameLine(div, text);
             }
 
             consoleDiv.appendChild(div);
@@ -228,6 +247,90 @@
                 consoleDiv.removeChild(consoleDiv.firstChild);
             }
         }
+
+        // --- Plain game log lines: muted timestamps, pastel nicknames (EasyChat.PastelizeNick), clickable SteamIDs ---
+        const TS_RE = /^(\[\d{1,2}:\d{2}:\d{2}\])\s?/;
+        const CHAT_RE = /^([^:\[<(]{1,32}): (.*)$/;
+        const STEAMID_RE = /\bSTEAM_[0-5]:[01]:\d+\b/g;
+
+        function appendClickable(parent, text) {
+            let last = 0;
+            for (const m of text.matchAll(STEAMID_RE)) {
+                if (m.index > last) parent.append(text.slice(last, m.index));
+                const id = document.createElement('span');
+                id.className = 'steamid';
+                id.textContent = m[0];
+                parent.append(id);
+                last = m.index + m[0].length;
+            }
+            if (last < text.length) parent.append(text.slice(last));
+        }
+
+        function appendWithColor(parent, text, color) {
+            if (color) parent.style.color = color;
+            appendClickable(parent, text);
+        }
+
+        function renderGameLine(div, text) {
+            let rest = text;
+
+            const ts = rest.match(TS_RE);
+            if (ts) {
+                const span = document.createElement('span');
+                span.style.color = '#777';
+                span.textContent = ts[1];
+                div.append(span);
+                rest = rest.slice(ts[0].length);
+            }
+
+            const chat = rest.match(CHAT_RE);
+            if (chat) {
+                const span = document.createElement('span');
+                span.style.color = nickColor(chat[1]);
+                span.textContent = chat[1];
+                div.append(span, ': ');
+                appendClickable(div, chat[2]);
+                return;
+            }
+
+            // Spawn spam (props, ragdolls, vehicles, NPCs, entities) is background noise: render it in gray.
+            appendWithColor(div, rest, rest.includes(' spawned ') ? '#999' : null);
+        }
+
+        // EasyChat.PastelizeNick: hash the nick (UTF-8 bytes), use it as an HSV hue.
+        function nickColor(nick) {
+            const bytes = new TextEncoder().encode(nick);
+            let counter = 1;
+            const len = bytes.length;
+            for (let i = 0; i < len; i += 3) {
+                counter = (counter * 8161) % 4294967279
+                    + bytes[i] * 16776193
+                    + (i + 1 < len ? bytes[i + 1] : len - i + 255) * 8372226
+                    + (i + 2 < len ? bytes[i + 2] : len - i + 255) * 3932164;
+            }
+            const hue = counter % 4294967291;
+            const rgb = hsvToRgb((hue % 180) * 2, hue % 3 === 0 ? 0.3 : 0.6, hue % 127 === 0 ? 0.6 : 1);
+            return `rgb(${rgb.join(', ')})`;
+        }
+
+        function hsvToRgb(h, s, v) {
+            const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+            const rgb = h < 60 ? [c, x, 0]
+                : h < 120 ? [x, c, 0]
+                : h < 180 ? [0, c, x]
+                : h < 240 ? [0, x, c]
+                : h < 300 ? [x, 0, c]
+                : [c, 0, x];
+            return rgb.map(ch => Math.round((ch + m) * 255));
+        }
+
+        consoleDiv.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('steamid')) return;
+            navigator.clipboard?.writeText(e.target.textContent).then(() => {
+                e.target.classList.add('copied');
+                setTimeout(() => e.target.classList.remove('copied'), 500);
+            }).catch(() => { });
+        });
 
         function addInfo(text) {
             addLog(text, '#ffc954');
@@ -244,6 +347,7 @@
             addInfo("  kick [대상] {사유}               사용자를 킥합니다.");
             addInfo("  banid [고유번호] {기간} {사유}   해당 고유번호를 밴 처리합니다.");
             addInfo("  bancheck [고유번호]              해당 고유번호의 밴 여부를 확인합니다.");
+            addInfo("  그 외 텍스트                     전체 채팅으로 보냅니다.");
         }
 
         // The browser resends the last event id on reconnect, so the server only sends missed lines.
@@ -286,13 +390,14 @@
             if (evtSource.readyState !== EventSource.CLOSED) return;
             try {
                 const res = await fetch('/api/whoami');
-                if (res.status === 401 || res.status === 403) {
-                    redirectToLogin();
-                    return;
-                }
+                if (res.status === 401) { relogin(); return; }
+                if (res.status === 403) { redirectToMain(); return; }
             } catch { }
             addError("콘솔 연결이 끊어졌습니다. 페이지를 새로고침하세요.");
         };
+
+        // Anything that is not a known command is treated as chat.
+        const COMMANDS = new Set(['say', 'status', 'kick', 'banid', 'bancheck']);
 
         form.onsubmit = async (e) => {
             e.preventDefault();
@@ -306,18 +411,27 @@
                 return;
             }
 
+            const word = val.split(/ +/, 1)[0].toLowerCase();
+            const command = COMMANDS.has(word) ? val : `say ${val}`;
+
             try {
                 addInfo("> " + val);
 
                 const res = await fetch('/api/command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: val })
+                    body: JSON.stringify({ command })
                 });
 
-                if (res.status === 401 || res.status === 403) {
+                if (res.status === 401) {
                     addError("세션이 만료되었습니다. 다시 로그인하세요.");
-                    setTimeout(redirectToLogin, 1500);
+                    setTimeout(relogin, 1500);
+                    return;
+                }
+
+                if (res.status === 403) {
+                    addError("접근이 거부되었습니다.");
+                    setTimeout(redirectToMain, 1500);
                     return;
                 }
 
