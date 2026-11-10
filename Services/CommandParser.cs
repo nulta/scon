@@ -4,61 +4,106 @@ namespace Scon.Services;
 
 public static class CommandParser
 {
-    public static (bool Success, string Base64Command, string Error) Process(string commandBody, string username)
+    /// <summary>Maximum size of the command text sent to the game server (spec: 1024 bytes).</summary>
+    public const int MaxCommandBytes = 1024;
+
+    /// <summary>Maximum length of the raw user input. Anything longer is rejected outright.</summary>
+    public const int MaxInputLength = 2000;
+
+    public const int MaxUsernameLength = 16;
+
+    public static (bool Success, string Base64Command, string Error) Process(string? commandBody, string username)
     {
         if (string.IsNullOrWhiteSpace(commandBody))
         {
             return (false, "", "Empty command");
         }
 
-        var finalCommand = ParseCommand(commandBody, username);
+        if (commandBody.Length > MaxInputLength)
+        {
+            return (false, "", "Command is too long");
+        }
+
+        var (finalCommand, error) = ParseCommand(commandBody, username);
 
         if (finalCommand is null)
         {
-            return (false, "", "Invalid command");
+            return (false, "", error);
+        }
+
+        if (Encoding.UTF8.GetByteCount(finalCommand) > MaxCommandBytes)
+        {
+            return (false, "", "Command is too long");
         }
 
         return (true, finalCommand.ToBase64(), "");
     }
 
-    private static string? ParseCommand(string command, string username)
+    private static (string? Command, string Error) ParseCommand(string command, string username)
     {
-        username = username.ConsoleSafe().Cut(16);
-        command = command.ConsoleSafe();
+        username = username.ConsoleSafe().Cut(MaxUsernameLength);
+        command = command.ConsoleSafe().Trim();
 
-        var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return (null, "Empty command");
+        }
+
         var action = parts[0].ToLowerInvariant();
         var args = parts.GetOr(1, "");
 
         switch (action)
         {
             case "say":
-                args = args.Cut(200);
-                return $"scon_say \"{username}\" \"{args.ToBase64()}\"";
+            {
+                var text = args.Cut(200);
+                if (text.IsEmpty()) return (null, "Usage: say [text]");
+
+                return ($"scon_say \"{username}\" \"{text.ToBase64()}\"", "");
+            }
 
             case "status":
-                return $"scon_status \"{username}\"";
+                return ($"scon_status \"{username}\"", "");
 
             case "kick":
-                var kickParts = args.Split(' ', 2);
-                var kickUser = kickParts[0].Cut(32);
-                var kickReason = kickParts.GetOr(1, "Kicked by admin").Cut(64);
+            {
+                var kickParts = SplitArgs(args, 2);
+                var target = kickParts.GetOr(0, "").Cut(32);
+                if (target.IsEmpty()) return (null, "Usage: kick [target] {reason}");
 
-                return $"scon_kick \"{username}\" \"{kickUser.ToBase64()}\" \"{kickReason.ToBase64()}\"";
+                var reason = kickParts.GetOr(1, "").OrDefault("Kicked by admin").Cut(64);
+
+                return ($"scon_kick \"{username}\" \"{target.ToBase64()}\" \"{reason.ToBase64()}\"", "");
+            }
 
             case "banid":
-                var banParts = args.Split(' ', 3);
-                var banId = banParts[0].Cut(32);
-                var banTime = banParts.GetOr(1, "0").Cut(16);
-                var banReason = banParts.GetOr(2, "No reason given").Cut(64);
+            {
+                var banParts = SplitArgs(args, 3);
+                var steamId = banParts.GetOr(0, "").Cut(32);
+                if (steamId.IsEmpty()) return (null, "Usage: banid [steamid] {duration} {reason}");
 
-                return $"scon_banid \"{username}\" \"{banId}\" \"{banTime}\" \"{banReason.ToBase64()}\"";
-            
+                var duration = banParts.GetOr(1, "").OrDefault("0").Cut(20);
+                var reason = banParts.GetOr(2, "").OrDefault("No reason given").Cut(64);
+
+                return ($"scon_banid \"{username}\" \"{steamId}\" \"{duration}\" \"{reason.ToBase64()}\"", "");
+            }
+
             case "bancheck":
-                var checkId = args.Split(' ', 2)[0].Cut(32);
-                return $"scon_bancheck \"{username}\" \"{checkId}\"";
+            {
+                var steamId = SplitArgs(args, 2).GetOr(0, "").Cut(32);
+                if (steamId.IsEmpty()) return (null, "Usage: bancheck [steamid]");
+
+                return ($"scon_bancheck \"{username}\" \"{steamId}\"", "");
+            }
         }
 
-        return null;
+        return (null, $"Unknown command: {action.Cut(32)}");
+    }
+
+    /// <summary>Splits on spaces, collapsing repeated spaces (e.g. "kick  bob  afk").</summary>
+    private static string[] SplitArgs(string args, int count)
+    {
+        return args.Split(' ', count, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 }

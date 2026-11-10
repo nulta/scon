@@ -1,14 +1,10 @@
+/* Pretendard JP (SIL OFL 1.1) - dynamic subset: the browser only downloads the glyph chunks a page uses */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-jp-dynamic-subset.css');
+
 @font-face {
     font-family: 'MonoplexKR';
     src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_Monoplex-kr@1.0/MonoplexKR-Regular.woff2') format('woff2');
     font-weight: 400;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: 'IbmPlexSans';
-    src: local("IBM Plex Sans KR"), url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_20-07@1.0/IBMPlexSansKR-Regular.woff') format('woff');
-    font-weight: normal;
     font-display: swap;
 }
 
@@ -20,7 +16,12 @@ body {
     margin: 0;
     background-color: #111;
     color: #eee;
-    font-family: 'IbmPlexSans', sans-serif;
+    font-family: 'Pretendard JP', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
+
+/* Form controls don't inherit the page font by default */
+button {
+    font-family: inherit;
 }
 
 :root {

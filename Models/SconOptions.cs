@@ -26,4 +26,17 @@ public class SconOptions
             SconSendCmd = GetEnvironmentVariable("SCON_SEND_CMD") ?? ""
         };
     }
+
+    /// <summary>Returns a list of configuration problems. Empty if the configuration is usable.</summary>
+    public List<string> Validate()
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrEmpty(DiscordClientId)) errors.Add("DISCORD_CLIENT_ID is not set.");
+        if (string.IsNullOrEmpty(DiscordClientSecret)) errors.Add("DISCORD_CLIENT_SECRET is not set.");
+        if (DiscordAuthorizedGuildId == 0) errors.Add("DISCORD_AUTHORIZED_GUILD_ID is not set or not a valid id.");
+        if (DiscordAuthorizedRoleId == 0) errors.Add("DISCORD_AUTHORIZED_ROLE_ID is not set or not a valid id.");
+
+        return errors;
+    }
 }
