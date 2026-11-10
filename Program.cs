@@ -53,9 +53,9 @@ builder.Services.AddAuthentication(options =>
     options.LogoutPath = "/logout";
     options.AccessDeniedPath = "/unauthorized";
 
-    // spec: sessions older than 60 minutes must go through the guild/role check again.
+    // spec: sessions older than 6 hours must go through the guild/role check again.
     // Absolute expiry (no sliding) forces a fresh Discord login, which re-runs OnCreatingTicket.
-    options.ExpireTimeSpan = TimeSpan.FromMinutes(60);
+    options.ExpireTimeSpan = TimeSpan.FromHours(6);
     options.SlidingExpiration = false;
 
     options.Cookie.HttpOnly = true;

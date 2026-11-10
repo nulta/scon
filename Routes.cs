@@ -18,10 +18,13 @@ public static class Routes
         app.MapGet("/api/health", () => Results.Ok(new ApiHealth("Healthy")));
 
         // /login
-        app.MapGet("/login", () => Results.Challenge(
-            new AuthenticationProperties { RedirectUri = "/" },
-            authenticationSchemes: ["Discord"]
-        ));
+        // A stale (expired) cookie is replaced by the OAuth flow; with a still-valid
+        // session there is nothing to re-authenticate, so go straight to the console.
+        app.MapGet("/login", (HttpContext ctx) => HasSconClaim(ctx)
+            ? Results.Redirect("/console")
+            : Results.Challenge(
+                new AuthenticationProperties { RedirectUri = "/" },
+                authenticationSchemes: ["Discord"]));
 
         // /logout (POST per spec, so a third-party page can't log users out with a simple link/img)
         app.MapPost("/logout", async (HttpContext ctx) =>
